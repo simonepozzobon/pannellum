@@ -1,17 +1,18 @@
 /*
  * Pannellum - An HTML5 based Panorama Viewer
  * Copyright (c) 2011-2018 Matthew Petroff
- * 
+ * Copyright (c) 2011-2016 Matthew Petroff
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -244,10 +245,7 @@ if (document.fullscreenEnabled || document.mozFullScreenEnabled || document.webk
 // Device orientation toggle
 controls.orientation = document.createElement('div');
 controls.orientation.addEventListener('click', function(e) {
-    if (orientation)
-        stopOrientation();
-    else
-        startOrientation();
+    window.addEventListener('orientationchange', orientationListener);
 });
 controls.orientation.addEventListener('mousedown', function(e) {e.stopPropagation();});
 controls.orientation.addEventListener('touchstart', function(e) {e.stopPropagation();});
@@ -266,9 +264,11 @@ function deviceOrientationTest(e) {
     }
 }
 if (window.DeviceOrientationEvent) {
-    window.addEventListener('deviceorientation', deviceOrientationTest);
-} else {
-    orientationSupport = false;
+    window.addEventListener('orientationchange', function(e) {
+        window.removeEventListener('orientationchange', this);
+        if (e)
+            controls.container.appendChild(controls.orientation);
+    });
 }
 
 // Compass
@@ -303,11 +303,8 @@ function init() {
         return;
     }
 
-    origHfov = config.hfov;
-    origPitch = config.pitch;
-
     var i, p;
-    
+
     if (config.type == 'cubemap') {
         panoImage = [];
         for (i = 0; i < 6; i++) {
@@ -345,21 +342,21 @@ function init() {
     if (config.type == 'cubemap') {
         // Quick loading counter for synchronous loading
         var itemsToLoad = 6;
-        
+
         var onLoad = function() {
             itemsToLoad--;
             if (itemsToLoad === 0) {
                 onImageLoad();
             }
         };
-        
+
         var onError = function(e) {
             var a = document.createElement('a');
             a.href = e.target.src;
             a.textContent = a.href;
             anError(config.strings.fileAccessError.replace('%s', a.outerHTML));
         };
-        
+
         for (i = 0; i < panoImage.length; i++) {
             p = config.cubeMap[i];
             if (p == "null") { // support partial cubemap image with explicitly empty faces
@@ -381,16 +378,16 @@ function init() {
         if (config.basePath) {
             p = config.basePath;
         }
-        
+
         if (config.dynamic !== true) {
             // Still image
             p = absoluteURL(config.panorama) ? config.panorama : p + config.panorama;
-            
+
             panoImage.onload = function() {
                 window.URL.revokeObjectURL(this.src);  // Clean up
                 onImageLoad();
             };
-            
+
             var xhr = new XMLHttpRequest();
             xhr.onloadend = function() {
                 if (xhr.status != 200) {
@@ -442,10 +439,9 @@ function init() {
             xhr.send();
         }
     }
-    
-    if (config.draggable)
-        uiContainer.classList.add('pnlm-grab');
-    uiContainer.classList.remove('pnlm-grabbing');
+
+    container.classList.add('pnlm-grab');
+    container.classList.remove('pnlm-grabbing');
 }
 
 /**
@@ -536,7 +532,7 @@ function parseGPanoXMP(image) {
         var start = img.indexOf('<x:xmpmeta');
         if (start > -1 && config.ignoreGPanoXMP !== true) {
             var xmpData = img.substring(start, img.indexOf('</x:xmpmeta>') + 12);
-            
+
             // Extract the requested tag from the XMP data
             var getTag = function(tag) {
                 var result;
@@ -552,7 +548,7 @@ function parseGPanoXMP(image) {
                 }
                 return null;
             };
-            
+
             // Relevant XMP data
             var xmp = {
                 fullWidth: getTag('GPano:FullPanoWidthPixels'),
@@ -564,11 +560,11 @@ function parseGPanoXMP(image) {
                 horizonPitch: getTag('GPano:PosePitchDegrees'),
                 horizonRoll: getTag('GPano:PoseRollDegrees')
             };
-            
+
             if (xmp.fullWidth !== null && xmp.croppedWidth !== null &&
                 xmp.fullHeight !== null && xmp.croppedHeight !== null &&
                 xmp.topPixels !== null) {
-                
+
                 // Set up viewer using GPano XMP data
                 if (specifiedPhotoSphereExcludes.indexOf('haov') < 0)
                     config.haov = xmp.croppedWidth / xmp.fullWidth * 360;
@@ -589,11 +585,11 @@ function parseGPanoXMP(image) {
                     if (specifiedPhotoSphereExcludes.indexOf('horizonRoll') < 0)
                         config.horizonRoll = xmp.horizonRoll;
                 }
-                
+
                 // TODO: add support for initial view settings
             }
         }
-        
+
         // Load panorama
         panoImage.src = window.URL.createObjectURL(image);
     });
@@ -678,12 +674,12 @@ function onDocumentMouseDown(event) {
     event.preventDefault();
     // But not all of it
     container.focus();
-    
+
     // Only do something if the panorama is loaded
     if (!loaded || !config.draggable) {
         return;
     }
-    
+
     // Calculate mouse position relative to top left of viewer container
     var pos = mousePosition(event);
 
@@ -693,28 +689,25 @@ function onDocumentMouseDown(event) {
         console.log('Pitch: ' + coords[0] + ', Yaw: ' + coords[1] + ', Center Pitch: ' +
             config.pitch + ', Center Yaw: ' + config.yaw + ', HFOV: ' + config.hfov);
     }
-    
+
     // Turn off auto-rotation if enabled
     stopAnimation();
 
-    stopOrientation();
+    window.removeEventListener('orientationchange', orientationListener);
     config.roll = 0;
-
-    speed.hfov = 0;
 
     isUserInteracting = true;
     latestInteraction = Date.now();
-    
+
     onPointerDownPointerX = pos.x;
     onPointerDownPointerY = pos.y;
-    
+
     onPointerDownYaw = config.yaw;
     onPointerDownPitch = config.pitch;
-    
-    uiContainer.classList.add('pnlm-grabbing');
-    uiContainer.classList.remove('pnlm-grab');
-    
-    fireEvent('mousedown', event);
+
+    container.classList.add('pnlm-grabbing');
+    container.classList.remove('pnlm-grab');
+
     animateInit();
 }
 
@@ -775,11 +768,11 @@ function onDocumentMouseMove(event) {
         var yaw = ((Math.atan(onPointerDownPointerX / canvasWidth * 2 - 1) - Math.atan(pos.x / canvasWidth * 2 - 1)) * 180 / Math.PI * config.hfov / 90) + onPointerDownYaw;
         speed.yaw = (yaw - config.yaw) % 360 * 0.2;
         config.yaw = yaw;
-        
-        var vfov = 2 * Math.atan(Math.tan(config.hfov/360*Math.PI) * canvasHeight / canvasWidth) * 180 / Math.PI;
-        
-        var pitch = ((Math.atan(pos.y / canvasHeight * 2 - 1) - Math.atan(onPointerDownPointerY / canvasHeight * 2 - 1)) * 180 / Math.PI * vfov / 90) + onPointerDownPitch;
-        speed.pitch = (pitch - config.pitch) * 0.2;
+
+        var vfov = 2 * Math.atan(Math.tan(config.hfov/360*Math.PI) * canvas.height / canvas.width) * 180 / Math.PI;
+
+        var pitch = ((Math.atan(pos.y / canvas.height * 2 - 1) - Math.atan(onPointerDownPointerY / canvas.height * 2 - 1)) * 180 / Math.PI * vfov / 90) + onPointerDownPitch;
+        pitchSpeed = (pitch - config.pitch) * 0.2;
         config.pitch = pitch;
     }
 }
@@ -820,7 +813,7 @@ function onDocumentTouchStart(event) {
     // Turn off auto-rotation if enabled
     stopAnimation();
 
-    stopOrientation();
+    window.removeEventListener('orientationchange', orientationListener);
     config.roll = 0;
 
     speed.hfov = 0;
@@ -830,7 +823,7 @@ function onDocumentTouchStart(event) {
 
     onPointerDownPointerX = pos0.x;
     onPointerDownPointerY = pos0.y;
-    
+
     if (event.targetTouches.length == 2) {
         // Down pointer is the center of the two fingers
         var pos1 = mousePosition(event.targetTouches[1]);
@@ -841,7 +834,7 @@ function onDocumentTouchStart(event) {
     }
     isUserInteracting = true;
     latestInteraction = Date.now();
-    
+
     onPointerDownYaw = config.yaw;
     onPointerDownPitch = config.pitch;
 
@@ -869,7 +862,7 @@ function onDocumentTouchMove(event) {
         var pos0 = mousePosition(event.targetTouches[0]);
         var clientX = pos0.x;
         var clientY = pos0.y;
-        
+
         if (event.targetTouches.length == 2 && onPointerDownPointerDist != -1) {
             var pos1 = mousePosition(event.targetTouches[1]);
             clientX += (pos1.x - pos0.x) * 0.5;
@@ -880,21 +873,12 @@ function onDocumentTouchMove(event) {
             onPointerDownPointerDist = clientDist;
         }
 
-        // The smaller the config.hfov value (the more zoomed-in the user is), the faster
-        // yaw/pitch are perceived to change on one-finger touchmove (panning) events and vice versa.
-        // To improve usability at both small and large zoom levels (config.hfov values)
-        // we introduce a dynamic pan speed coefficient.
-        //
-        // Currently this seems to *roughly* keep initial drag/pan start position close to
-        // the user's finger while panning regardless of zoom level / config.hfov value.
-        var touchmovePanSpeedCoeff = (config.hfov / 360) * config.touchPanSpeedCoeffFactor;
-
-        var yaw = (onPointerDownPointerX - clientX) * touchmovePanSpeedCoeff + onPointerDownYaw;
-        speed.yaw = (yaw - config.yaw) % 360 * 0.2;
+        var yaw = (onPointerDownPointerX - clientX) * 0.1 + onPointerDownYaw;
+        yawSpeed = (yaw - config.yaw) % 360 * 0.2;
         config.yaw = yaw;
 
-        var pitch = (clientY - onPointerDownPointerY) * touchmovePanSpeedCoeff + onPointerDownPitch;
-        speed.pitch = (pitch - config.pitch) * 0.2;
+        var pitch = (clientY - onPointerDownPointerY) * 0.1 + onPointerDownPitch;
+        pitchSpeed = (pitch - config.pitch) * 0.2;
         config.pitch = pitch;
     }
 }
@@ -928,6 +912,9 @@ function onDocumentPointerDown(event) {
         event.targetTouches = pointerCoordinates;
         onDocumentTouchStart(event);
         event.preventDefault();
+
+        window.removeEventListener('orientationchange', orientationListener);
+        config.roll = 0;
     }
 }
 
@@ -980,8 +967,10 @@ function onDocumentPointerUp(event) {
  * @param {WheelEvent} event - Document mouse wheel event.
  */
 function onDocumentMouseWheel(event) {
-    // Only do something if the panorama is loaded and mouse wheel zoom is enabled
-    if (!loaded || (config.mouseZoom == 'fullscreenonly' && !fullscreenActive)) {
+    event.preventDefault();
+
+    // Only do something if the panorama is loaded
+    if (!loaded) {
         return;
     }
 
@@ -1004,6 +993,7 @@ function onDocumentMouseWheel(event) {
         setHfov(config.hfov + event.detail * 1.5);
         speed.hfov = event.detail > 0 ? 1 : -1;
     }
+
     animateInit();
 }
 
@@ -1013,21 +1003,22 @@ function onDocumentMouseWheel(event) {
  * @param {KeyboardEvent} event - Document key press event.
  */
 function onDocumentKeyPress(event) {
+    // Override default action
+    event.preventDefault();
+
     // Turn off auto-rotation if enabled
     stopAnimation();
     latestInteraction = Date.now();
 
-    stopOrientation();
+    window.removeEventListener('orientationchange', orientationListener);
     config.roll = 0;
 
     // Record key pressed
-    var keynumber = event.which || event.keycode;
+    var keynumber = event.keycode;
+    if (event.which) {
+        keynumber = event.which;
+    }
 
-    // Override default action for keys that are used
-    if (config.capturedKeyNumbers.indexOf(keynumber) < 0)
-        return;
-    event.preventDefault();
-    
     // If escape key is pressed
     if (keynumber == 27) {
         // If in fullscreen mode
@@ -1063,7 +1054,13 @@ function onDocumentKeyUp(event) {
     if (config.capturedKeyNumbers.indexOf(keynumber) < 0)
         return;
     event.preventDefault();
-    
+
+    // Record key released
+    var keynumber = event.keycode;
+    if (event.which) {
+        keynumber = event.which;
+    }
+
     // Change key
     changeKey(keynumber, false);
 }
@@ -1081,53 +1078,53 @@ function changeKey(keynumber, value) {
         case 109: case 189: case 17: case 173:
             if (keysDown[0] != value) { keyChanged = true; }
             keysDown[0] = value; break;
-        
+
         // If plus key is released
         case 107: case 187: case 16: case 61:
             if (keysDown[1] != value) { keyChanged = true; }
             keysDown[1] = value; break;
-        
+
         // If up arrow is released
         case 38:
             if (keysDown[2] != value) { keyChanged = true; }
             keysDown[2] = value; break;
-        
+
         // If "w" is released
         case 87:
             if (keysDown[6] != value) { keyChanged = true; }
             keysDown[6] = value; break;
-        
+
         // If down arrow is released
         case 40:
             if (keysDown[3] != value) { keyChanged = true; }
             keysDown[3] = value; break;
-        
+
         // If "s" is released
         case 83:
             if (keysDown[7] != value) { keyChanged = true; }
             keysDown[7] = value; break;
-        
+
         // If left arrow is released
         case 37:
             if (keysDown[4] != value) { keyChanged = true; }
             keysDown[4] = value; break;
-        
+
         // If "a" is released
         case 65:
             if (keysDown[8] != value) { keyChanged = true; }
             keysDown[8] = value; break;
-        
+
         // If right arrow is released
         case 39:
             if (keysDown[5] != value) { keyChanged = true; }
             keysDown[5] = value; break;
-        
+
         // If "d" is released
         case 68:
             if (keysDown[9] != value) { keyChanged = true; }
             keysDown[9] = value;
     }
-    
+
     if (keyChanged && value) {
         if (typeof performance !== 'undefined' && performance.now()) {
             prevTime = performance.now();
@@ -1149,12 +1146,10 @@ function keyRepeat() {
         return;
     }
 
-    var isKeyDown = false;
-
     var prevPitch = config.pitch;
     var prevYaw = config.yaw;
     var prevZoom = config.hfov;
-    
+
     var newTime;
     if (typeof performance !== 'undefined' && performance.now()) {
         newTime = performance.now();
@@ -1166,49 +1161,46 @@ function keyRepeat() {
     }
     var diff = (newTime - prevTime) * config.hfov / 1700;
     diff = Math.min(diff, 1.0);
-    
+
     // If minus key is down
     if (keysDown[0] && config.keyboardZoom === true) {
         setHfov(config.hfov + (speed.hfov * 0.8 + 0.5) * diff);
         isKeyDown = true;
     }
-    
+
     // If plus key is down
     if (keysDown[1] && config.keyboardZoom === true) {
         setHfov(config.hfov + (speed.hfov * 0.8 - 0.2) * diff);
         isKeyDown = true;
     }
-    
+
     // If up arrow or "w" is down
     if (keysDown[2] || keysDown[6]) {
         // Pan up
         config.pitch += (speed.pitch * 0.8 + 0.2) * diff;
         isKeyDown = true;
     }
-    
+
     // If down arrow or "s" is down
     if (keysDown[3] || keysDown[7]) {
         // Pan down
         config.pitch += (speed.pitch * 0.8 - 0.2) * diff;
         isKeyDown = true;
     }
-    
+
     // If left arrow or "a" is down
     if (keysDown[4] || keysDown[8]) {
         // Pan left
         config.yaw += (speed.yaw * 0.8 - 0.2) * diff;
         isKeyDown = true;
     }
-    
+
     // If right arrow or "d" is down
     if (keysDown[5] || keysDown[9]) {
         // Pan right
         config.yaw += (speed.yaw * 0.8 + 0.2) * diff;
         isKeyDown = true;
     }
-
-    if (isKeyDown)
-        latestInteraction = Date.now();
 
     // If auto-rotate
     var inactivityInterval = Date.now() - latestInteraction;
@@ -1220,7 +1212,7 @@ function keyRepeat() {
             yawDiff = (-config.autoRotate > 0 ? 1 : -1) * Math.min(Math.abs(config.autoRotate * timeDiff), Math.abs(yawDiff));
             config.yaw += yawDiff;
         }
-        
+
         // Deal with stopping auto rotation after a set delay
         if (config.autoRotateStopDelay) {
             config.autoRotateStopDelay -= newTime - prevTime;
@@ -1249,7 +1241,7 @@ function keyRepeat() {
     // "Inertia"
     if (diff > 0 && !config.autoRotate) {
         // "Friction"
-        var slowDownFactor = 1 - config.friction;
+        var friction = 0.85;
 
         // Yaw
         if (!keysDown[4] && !keysDown[5] && !keysDown[8] && !keysDown[9] && !animatedMove.yaw) {
@@ -1267,17 +1259,17 @@ function keyRepeat() {
 
     prevTime = newTime;
     if (diff > 0) {
-        speed.yaw = speed.yaw * 0.8 + (config.yaw - prevYaw) / diff * 0.2;
-        speed.pitch = speed.pitch * 0.8 + (config.pitch - prevPitch) / diff * 0.2;
-        speed.hfov = speed.hfov * 0.8 + (config.hfov - prevZoom) / diff * 0.2;
-        
+        yawSpeed = yawSpeed * 0.8 + (config.yaw - prevYaw) / diff * 0.2;
+        pitchSpeed = pitchSpeed * 0.8 + (config.pitch - prevPitch) / diff * 0.2;
+        zoomSpeed = zoomSpeed * 0.8 + (config.hfov - prevZoom) / diff * 0.2;
+
         // Limit speed
         var maxSpeed = config.autoRotate ? Math.abs(config.autoRotate) : 5;
         speed.yaw = Math.min(maxSpeed, Math.max(speed.yaw, -maxSpeed));
         speed.pitch = Math.min(maxSpeed, Math.max(speed.pitch, -maxSpeed));
         speed.hfov = Math.min(maxSpeed, Math.max(speed.hfov, -maxSpeed));
     }
-    
+
     // Stop movement if opposite controls are pressed
     if (keysDown[0] && keysDown[1]) {
         speed.hfov = 0;
@@ -1324,9 +1316,9 @@ function timingFunction(t) {
  * @private
  */
 function onDocumentResize() {
-    // Resize panorama renderer (moved to onFullScreenChange)
-    //renderer.resize();
-    //animateInit();
+    // Resize panorama renderer
+    renderer.resize();
+    animateInit();
 
     // Kludge to deal with WebKit regression: https://bugs.webkit.org/show_bug.cgi?id=93525
     onFullScreenChange('resize');
@@ -1439,6 +1431,12 @@ function render() {
             config.yaw += 360;
         }
 
+        // Keep a tmp value of yaw for autoRotate comparison later
+        tmpyaw = config.yaw;
+
+        // Ensure the yaw is within min and max allowed
+        config.yaw = Math.max(config.minYaw, Math.min(config.maxYaw, config.yaw));
+
         // Check if we autoRotate in a limited by min and max yaw
         // If so reverse direction
         if (config.autoRotate !== false && tmpyaw != config.yaw &&
@@ -1447,26 +1445,12 @@ function render() {
         }
 
         // Ensure the calculated pitch is within min and max allowed
-        var canvas = renderer.getCanvas();
-        var vfov = 2 * Math.atan(Math.tan(config.hfov / 180 * Math.PI * 0.5) /
-            (canvas.width / canvas.height)) / Math.PI * 180;
-        var minPitch = config.minPitch + vfov / 2,
-            maxPitch = config.maxPitch - vfov / 2;
-        var pitchRange = config.maxPitch - config.minPitch;
-        if (pitchRange < vfov) {
-            // Lock pitch to average of min and max pitch when both can be seen at once
-            minPitch = maxPitch = (minPitch + maxPitch) / 2;
-        }
-        if (isNaN(minPitch))
-            minPitch = -90;
-        if (isNaN(maxPitch))
-            maxPitch = 90;
-        config.pitch = Math.max(minPitch, Math.min(maxPitch, config.pitch));
-        
+        config.pitch = Math.max(config.minPitch, Math.min(config.maxPitch, config.pitch));
+
         renderer.render(config.pitch * Math.PI / 180, config.yaw * Math.PI / 180, config.hfov * Math.PI / 180, {roll: config.roll * Math.PI / 180});
-        
+
         renderHotSpots();
-        
+
         // Update compass
         if (config.compass) {
             compass.style.transform = 'rotate(' + (-config.yaw - config.northOffset) + 'deg)';
@@ -1603,7 +1587,7 @@ function renderInit() {
         }
     } catch(event) {
         // Panorama not loaded
-        
+
         // Display error if there is a bad texture
         if (event.type == 'webgl error' || event.type == 'no webgl') {
             anError();
@@ -1623,28 +1607,31 @@ function renderInit() {
  * @private
  */
 function renderInitCallback() {
-    // Fade if specified
-    if (config.sceneFadeDuration && renderer.fadeImg !== undefined) {
-        renderer.fadeImg.style.opacity = 0;
-        // Remove image
-        var fadeImg = renderer.fadeImg;
-        delete renderer.fadeImg;
-        setTimeout(function() {
-            renderContainer.removeChild(fadeImg);
-            fireEvent('scenechangefadedone');
-        }, config.sceneFadeDuration);
+    if (oldRenderer !== undefined) {
+        oldRenderer.destroy();
+
+        // Fade if specified
+        if (config.sceneFadeDuration && oldRenderer.fadeImg !== undefined) {
+            oldRenderer.fadeImg.style.opacity = 0;
+            // Remove image
+            var fadeImg = oldRenderer.fadeImg;
+            oldRenderer = undefined;
+            setTimeout(function() {
+                renderContainer.removeChild(fadeImg);
+            }, config.sceneFadeDuration);
+        }
     }
-    
+
     // Show compass if applicable
     if (config.compass) {
         compass.style.display = 'inline';
     } else {
         compass.style.display = 'none';
     }
-    
+
     // Show hotspots
     createHotSpots();
-    
+
     // Hide loading display
     infoDisplay.load.box.style.display = 'none';
     if (preview !== undefined) {
@@ -1653,8 +1640,6 @@ function renderInitCallback() {
     }
     loaded = true;
 
-    fireEvent('load');
-    
     animateInit();
 }
 
@@ -1767,7 +1752,70 @@ function createHotSpots() {
         config.hotSpots = config.hotSpots.sort(function(a, b) {
             return a.pitch < b.pitch;
         });
-        config.hotSpots.forEach(createHotSpot);
+        config.hotSpots.forEach(function(hs) {
+            var div = document.createElement('div');
+            div.className = 'pnlm-hotspot pnlm-tooltip pnlm-sprite pnlm-' + escapeHTML(hs.type);
+
+            var span = document.createElement('span');
+            if (hs.text)
+                span.innerHTML = escapeHTML(hs.text);
+
+            var a;
+            if (hs.video) {
+                var video = document.createElement('video'),
+                    p = hs.video;
+                if (config.basePath && !absoluteURL(p))
+                    p = config.basePath + p;
+                video.src = encodeURI(p);
+                video.controls = true;
+                video.style.width = hs.width + 'px';
+                renderContainer.appendChild(div);
+                span.appendChild(video);
+            } else if (hs.image) {
+                var p = hs.image;
+                if (config.basePath && !absoluteURL(p))
+                    p = config.basePath + p;
+                a = document.createElement('a');
+                a.href = encodeURI(hs.URL ? hs.URL : p);
+                a.target = '_blank';
+                span.appendChild(a);
+                var image = document.createElement('img');
+                image.src = encodeURI(p);
+                image.style.width = hs.width + 'px';
+                image.style.paddingTop = '5px';
+                renderContainer.appendChild(div);
+                a.appendChild(image);
+                span.style.maxWidth = 'initial';
+            } else if (hs.URL) {
+                a = document.createElement('a');
+                a.href = encodeURI(hs.URL);
+                a.target = '_blank';
+                renderContainer.appendChild(a);
+                div.style.cursor = 'pointer';
+                span.style.cursor = 'pointer';
+                a.appendChild(div);
+            } else {
+                if (hs.sceneId) {
+                    div.onclick = function() {
+                        loadScene(hs.sceneId, hs.targetPitch, hs.targetYaw, hs.targetHfov);
+                        return false;
+                    };
+                    div.ontouchend = function() {
+                        loadScene(hs.sceneId, hs.targetPitch, hs.targetYaw, hs.targetHfov);
+                        return false;
+                    };
+                    div.style.cursor = 'pointer';
+                    span.style.cursor = 'pointer';
+                }
+                renderContainer.appendChild(div);
+            }
+
+            div.appendChild(span);
+            span.style.width = span.scrollWidth - 20 + 'px';
+            span.style.marginLeft = -(span.scrollWidth - 26) / 2 + 'px';
+            span.style.marginTop = -span.scrollHeight - 12 + 'px';
+            hs.div = div;
+        });
     }
     hotspotsCreated = true;
     renderHotSpots();
@@ -1852,17 +1900,16 @@ function renderHotSpots() {
  */
 function mergeConfig(sceneId) {
     config = {};
-    var k, s;
-    var photoSphereExcludes = ['haov', 'vaov', 'vOffset', 'northOffset', 'horizonPitch', 'horizonRoll'];
-    specifiedPhotoSphereExcludes = [];
-    
+    var k;
+    var photoSphereExcludes = ['haov', 'vaov', 'vOffset', 'northOffset'];
+
     // Merge default config
     for (k in defaultConfig) {
         if (defaultConfig.hasOwnProperty(k)) {
             config[k] = defaultConfig[k];
         }
     }
-    
+
     // Merge default scene config
     for (k in initialConfig.default) {
         if (initialConfig.default.hasOwnProperty(k)) {
@@ -1880,7 +1927,7 @@ function mergeConfig(sceneId) {
             }
         }
     }
-    
+
     // Merge current scene config
     if ((sceneId !== null) && (sceneId !== '') && (initialConfig.scenes) && (initialConfig.scenes[sceneId])) {
         var scene = initialConfig.scenes[sceneId];
@@ -1902,7 +1949,7 @@ function mergeConfig(sceneId) {
         }
         config.scene = sceneId;
     }
-    
+
     // Merge initial config
     for (k in initialConfig) {
         if (initialConfig.hasOwnProperty(k)) {
@@ -1943,28 +1990,6 @@ function processOptions(isPreview) {
         renderContainer.appendChild(preview);
     }
 
-    // Handle different preview values
-    var title = config.title,
-        author = config.author;
-    if (isPreview) {
-        if ('previewTitle' in config)
-            config.title = config.previewTitle;
-        if ('previewAuthor' in config)
-            config.author = config.previewAuthor;
-    }
-
-    // Reset title / author display
-    if (!config.hasOwnProperty('title'))
-        infoDisplay.title.innerHTML = '';
-    if (!config.hasOwnProperty('author'))
-        infoDisplay.author.innerHTML = '';
-    if (!config.hasOwnProperty('title') && !config.hasOwnProperty('author'))
-        infoDisplay.container.style.display = 'none';
-
-    // Fill in load button label and loading box text
-    controls.load.innerHTML = '<p>' + config.strings.loadButtonLabel + '</p>';
-    infoDisplay.load.boxp.innerHTML = config.strings.loadingLabel;
-
     // Process other options
     for (var key in config) {
       if (config.hasOwnProperty(key)) {
@@ -1973,12 +1998,12 @@ function processOptions(isPreview) {
                 infoDisplay.title.innerHTML = escapeHTML(config[key]);
                 infoDisplay.container.style.display = 'inline';
                 break;
-            
+
             case 'author':
                 infoDisplay.author.innerHTML = config.strings.bylineLabel.replace('%s', escapeHTML(config[key]));
                 infoDisplay.container.style.display = 'inline';
                 break;
-            
+
             case 'fallback':
                 var link = document.createElement('a');
                 link.href = sanitizeURL(config[key]);
@@ -1991,11 +2016,16 @@ function processOptions(isPreview) {
                 infoDisplay.errorMsg.innerHTML = ''; // Removes all children nodes
                 infoDisplay.errorMsg.appendChild(message);
                 break;
-            
+
             case 'hfov':
                 setHfov(Number(config[key]));
                 break;
-            
+
+            case 'pitch':
+                // Keep pitch within bounds
+                config.pitch = Math.max(config.minPitch, Math.min(config.maxPitch, config.pitch));
+                break;
+
             case 'autoLoad':
                 if (config[key] === true && renderer === undefined) {
                     // Show loading box
@@ -2006,7 +2036,7 @@ function processOptions(isPreview) {
                     init();
                 }
                 break;
-            
+
             case 'showZoomCtrl':
                 if (config[key] && config.showControls != false) {
                     // Show zoom controls
@@ -2020,7 +2050,7 @@ function processOptions(isPreview) {
             case 'showFullscreenCtrl':
                 if (config[key] && config.showControls != false && ('fullscreen' in document || 'mozFullScreen' in document ||
                     'webkitIsFullScreen' in document || 'msFullscreenElement' in document)) {
-                    
+
                     // Show fullscreen control
                     controls.fullscreen.style.display = 'block';
                 } else {
@@ -2228,8 +2258,8 @@ function load() {
  */
 function loadScene(sceneId, targetPitch, targetYaw, targetHfov, fadeDone) {
     loaded = false;
-    animatedMove = {};
-    
+    oldRenderer = renderer;
+
     // Set up fade if specified
     var fadeImg, workingPitch, workingYaw, workingHfov;
     if (config.sceneFadeDuration && !fadeDone) {
@@ -2249,7 +2279,7 @@ function loadScene(sceneId, targetPitch, targetYaw, targetHfov, fadeDone) {
             return;
         }
     }
-    
+
     // Set new pointing
     if (targetPitch === 'same') {
         workingPitch = config.pitch;
@@ -2268,15 +2298,12 @@ function loadScene(sceneId, targetPitch, targetYaw, targetHfov, fadeDone) {
     } else {
         workingHfov = targetHfov;
     }
-    
+
     // Destroy hot spots from previous scene
     destroyHotSpots();
-    
+
     // Create the new config for the scene
     mergeConfig(sceneId);
-
-    // Stop motion
-    speed.yaw = speed.pitch = speed.hfov = 0;
 
     // Reload scene
     processOptions();
