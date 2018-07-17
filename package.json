@@ -23,8 +23,5 @@
   "keywords": [
     "panorama",
     "viewer"
-  ],
-  "devDependencies": {
-    "babel-cli": "^6.7.5"
-  }
+  ]
 }
