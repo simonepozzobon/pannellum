@@ -1607,19 +1607,16 @@ function renderInit() {
  * @private
  */
 function renderInitCallback() {
-    if (oldRenderer !== undefined) {
-        oldRenderer.destroy();
-
-        // Fade if specified
-        if (config.sceneFadeDuration && oldRenderer.fadeImg !== undefined) {
-            oldRenderer.fadeImg.style.opacity = 0;
-            // Remove image
-            var fadeImg = oldRenderer.fadeImg;
-            oldRenderer = undefined;
-            setTimeout(function() {
-                renderContainer.removeChild(fadeImg);
-            }, config.sceneFadeDuration);
-        }
+    // Fade if specified
+    if (config.sceneFadeDuration && renderer.fadeImg !== undefined) {
+        renderer.fadeImg.style.opacity = 0;
+        // Remove image
+        var fadeImg = renderer.fadeImg;
+        delete renderer.fadeImg;
+        setTimeout(function() {
+            renderContainer.removeChild(fadeImg);
+            fireEvent('scenechangefadedone');
+        }, config.sceneFadeDuration);
     }
 
     // Show compass if applicable
@@ -1639,6 +1636,8 @@ function renderInitCallback() {
         preview = undefined;
     }
     loaded = true;
+
+    fireEvent('load');
 
     animateInit();
 }
