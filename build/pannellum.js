@@ -1,7 +1,6 @@
 /*
  * Pannellum - An HTML5 based Panorama Viewer
  * Copyright (c) 2011-2018 Matthew Petroff
- * Copyright (c) 2011-2016 Matthew Petroff
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -240,7 +239,7 @@ window.pannellum = function (window, document, undefined) {
         // Device orientation toggle
         controls.orientation = document.createElement('div');
         controls.orientation.addEventListener('click', function (e) {
-            window.addEventListener('orientationchange', orientationListener);
+            if (orientation) stopOrientation();else startOrientation();
         });
         controls.orientation.addEventListener('mousedown', function (e) {
             e.stopPropagation();
@@ -265,10 +264,9 @@ window.pannellum = function (window, document, undefined) {
             }
         }
         if (window.DeviceOrientationEvent) {
-            window.addEventListener('orientationchange', function (e) {
-                window.removeEventListener('orientationchange', this);
-                if (e) controls.container.appendChild(controls.orientation);
-            });
+            window.addEventListener('deviceorientation', deviceOrientationTest);
+        } else {
+            orientationSupport = false;
         }
 
         // Compass
@@ -302,6 +300,9 @@ window.pannellum = function (window, document, undefined) {
                 anError();
                 return;
             }
+
+            origHfov = config.hfov;
+            origPitch = config.pitch;
 
             var i, p;
 
@@ -440,8 +441,8 @@ window.pannellum = function (window, document, undefined) {
                 }
             }
 
-            container.classList.add('pnlm-grab');
-            container.classList.remove('pnlm-grabbing');
+            if (config.draggable) uiContainer.classList.add('pnlm-grab');
+            uiContainer.classList.remove('pnlm-grabbing');
         }
 
         /**
@@ -683,8 +684,10 @@ window.pannellum = function (window, document, undefined) {
             // Turn off auto-rotation if enabled
             stopAnimation();
 
-            window.removeEventListener('orientationchange', orientationListener);
+            stopOrientation();
             config.roll = 0;
+
+            speed.hfov = 0;
 
             isUserInteracting = true;
             latestInteraction = Date.now();
@@ -695,9 +698,10 @@ window.pannellum = function (window, document, undefined) {
             onPointerDownYaw = config.yaw;
             onPointerDownPitch = config.pitch;
 
-            container.classList.add('pnlm-grabbing');
-            container.classList.remove('pnlm-grab');
+            uiContainer.classList.add('pnlm-grabbing');
+            uiContainer.classList.remove('pnlm-grab');
 
+            fireEvent('mousedown', event);
             animateInit();
         }
 
@@ -757,10 +761,10 @@ window.pannellum = function (window, document, undefined) {
                 speed.yaw = (yaw - config.yaw) % 360 * 0.2;
                 config.yaw = yaw;
 
-                var vfov = 2 * Math.atan(Math.tan(config.hfov / 360 * Math.PI) * canvas.height / canvas.width) * 180 / Math.PI;
+                var vfov = 2 * Math.atan(Math.tan(config.hfov / 360 * Math.PI) * canvasHeight / canvasWidth) * 180 / Math.PI;
 
-                var pitch = (Math.atan(pos.y / canvas.height * 2 - 1) - Math.atan(onPointerDownPointerY / canvas.height * 2 - 1)) * 180 / Math.PI * vfov / 90 + onPointerDownPitch;
-                pitchSpeed = (pitch - config.pitch) * 0.2;
+                var pitch = (Math.atan(pos.y / canvasHeight * 2 - 1) - Math.atan(onPointerDownPointerY / canvasHeight * 2 - 1)) * 180 / Math.PI * vfov / 90 + onPointerDownPitch;
+                speed.pitch = (pitch - config.pitch) * 0.2;
                 config.pitch = pitch;
             }
         }
@@ -801,7 +805,7 @@ window.pannellum = function (window, document, undefined) {
             // Turn off auto-rotation if enabled
             stopAnimation();
 
-            window.removeEventListener('orientationchange', orientationListener);
+            stopOrientation();
             config.roll = 0;
 
             speed.hfov = 0;
@@ -859,12 +863,21 @@ window.pannellum = function (window, document, undefined) {
                     onPointerDownPointerDist = clientDist;
                 }
 
-                var yaw = (onPointerDownPointerX - clientX) * 0.1 + onPointerDownYaw;
-                yawSpeed = (yaw - config.yaw) % 360 * 0.2;
+                // The smaller the config.hfov value (the more zoomed-in the user is), the faster
+                // yaw/pitch are perceived to change on one-finger touchmove (panning) events and vice versa.
+                // To improve usability at both small and large zoom levels (config.hfov values)
+                // we introduce a dynamic pan speed coefficient.
+                //
+                // Currently this seems to *roughly* keep initial drag/pan start position close to
+                // the user's finger while panning regardless of zoom level / config.hfov value.
+                var touchmovePanSpeedCoeff = config.hfov / 360 * config.touchPanSpeedCoeffFactor;
+
+                var yaw = (onPointerDownPointerX - clientX) * touchmovePanSpeedCoeff + onPointerDownYaw;
+                speed.yaw = (yaw - config.yaw) % 360 * 0.2;
                 config.yaw = yaw;
 
-                var pitch = (clientY - onPointerDownPointerY) * 0.1 + onPointerDownPitch;
-                pitchSpeed = (pitch - config.pitch) * 0.2;
+                var pitch = (clientY - onPointerDownPointerY) * touchmovePanSpeedCoeff + onPointerDownPitch;
+                speed.pitch = (pitch - config.pitch) * 0.2;
                 config.pitch = pitch;
             }
         }
@@ -898,9 +911,6 @@ window.pannellum = function (window, document, undefined) {
                 event.targetTouches = pointerCoordinates;
                 onDocumentTouchStart(event);
                 event.preventDefault();
-
-                window.removeEventListener('orientationchange', orientationListener);
-                config.roll = 0;
             }
         }
 
@@ -951,10 +961,8 @@ window.pannellum = function (window, document, undefined) {
          * @param {WheelEvent} event - Document mouse wheel event.
          */
         function onDocumentMouseWheel(event) {
-            event.preventDefault();
-
-            // Only do something if the panorama is loaded
-            if (!loaded) {
+            // Only do something if the panorama is loaded and mouse wheel zoom is enabled
+            if (!loaded || config.mouseZoom == 'fullscreenonly' && !fullscreenActive) {
                 return;
             }
 
@@ -977,7 +985,6 @@ window.pannellum = function (window, document, undefined) {
                 setHfov(config.hfov + event.detail * 1.5);
                 speed.hfov = event.detail > 0 ? 1 : -1;
             }
-
             animateInit();
         }
 
@@ -987,21 +994,19 @@ window.pannellum = function (window, document, undefined) {
          * @param {KeyboardEvent} event - Document key press event.
          */
         function onDocumentKeyPress(event) {
-            // Override default action
-            event.preventDefault();
-
             // Turn off auto-rotation if enabled
             stopAnimation();
             latestInteraction = Date.now();
 
-            window.removeEventListener('orientationchange', orientationListener);
+            stopOrientation();
             config.roll = 0;
 
             // Record key pressed
-            var keynumber = event.keycode;
-            if (event.which) {
-                keynumber = event.which;
-            }
+            var keynumber = event.which || event.keycode;
+
+            // Override default action for keys that are used
+            if (config.capturedKeyNumbers.indexOf(keynumber) < 0) return;
+            event.preventDefault();
 
             // If escape key is pressed
             if (keynumber == 27) {
@@ -1037,12 +1042,6 @@ window.pannellum = function (window, document, undefined) {
             // Override default action for keys that are used
             if (config.capturedKeyNumbers.indexOf(keynumber) < 0) return;
             event.preventDefault();
-
-            // Record key released
-            var keynumber = event.keycode;
-            if (event.which) {
-                keynumber = event.which;
-            }
 
             // Change key
             changeKey(keynumber, false);
@@ -1149,6 +1148,8 @@ window.pannellum = function (window, document, undefined) {
                 return;
             }
 
+            var isKeyDown = false;
+
             var prevPitch = config.pitch;
             var prevYaw = config.yaw;
             var prevZoom = config.hfov;
@@ -1205,6 +1206,8 @@ window.pannellum = function (window, document, undefined) {
                 isKeyDown = true;
             }
 
+            if (isKeyDown) latestInteraction = Date.now();
+
             // If auto-rotate
             var inactivityInterval = Date.now() - latestInteraction;
             if (config.autoRotate) {
@@ -1244,7 +1247,7 @@ window.pannellum = function (window, document, undefined) {
             // "Inertia"
             if (diff > 0 && !config.autoRotate) {
                 // "Friction"
-                var friction = 0.85;
+                var slowDownFactor = 1 - config.friction;
 
                 // Yaw
                 if (!keysDown[4] && !keysDown[5] && !keysDown[8] && !keysDown[9] && !animatedMove.yaw) {
@@ -1262,9 +1265,9 @@ window.pannellum = function (window, document, undefined) {
 
             prevTime = newTime;
             if (diff > 0) {
-                yawSpeed = yawSpeed * 0.8 + (config.yaw - prevYaw) / diff * 0.2;
-                pitchSpeed = pitchSpeed * 0.8 + (config.pitch - prevPitch) / diff * 0.2;
-                zoomSpeed = zoomSpeed * 0.8 + (config.hfov - prevZoom) / diff * 0.2;
+                speed.yaw = speed.yaw * 0.8 + (config.yaw - prevYaw) / diff * 0.2;
+                speed.pitch = speed.pitch * 0.8 + (config.pitch - prevPitch) / diff * 0.2;
+                speed.hfov = speed.hfov * 0.8 + (config.hfov - prevZoom) / diff * 0.2;
 
                 // Limit speed
                 var maxSpeed = config.autoRotate ? Math.abs(config.autoRotate) : 5;
@@ -1317,9 +1320,9 @@ window.pannellum = function (window, document, undefined) {
          * @private
          */
         function onDocumentResize() {
-            // Resize panorama renderer
-            renderer.resize();
-            animateInit();
+            // Resize panorama renderer (moved to onFullScreenChange)
+            //renderer.resize();
+            //animateInit();
 
             // Kludge to deal with WebKit regression: https://bugs.webkit.org/show_bug.cgi?id=93525
             onFullScreenChange('resize');
@@ -1421,12 +1424,6 @@ window.pannellum = function (window, document, undefined) {
                     config.yaw += 360;
                 }
 
-                // Keep a tmp value of yaw for autoRotate comparison later
-                tmpyaw = config.yaw;
-
-                // Ensure the yaw is within min and max allowed
-                config.yaw = Math.max(config.minYaw, Math.min(config.maxYaw, config.yaw));
-
                 // Check if we autoRotate in a limited by min and max yaw
                 // If so reverse direction
                 if (config.autoRotate !== false && tmpyaw != config.yaw && prevTime !== undefined) {
@@ -1435,7 +1432,18 @@ window.pannellum = function (window, document, undefined) {
                 }
 
                 // Ensure the calculated pitch is within min and max allowed
-                config.pitch = Math.max(config.minPitch, Math.min(config.maxPitch, config.pitch));
+                var canvas = renderer.getCanvas();
+                var vfov = 2 * Math.atan(Math.tan(config.hfov / 180 * Math.PI * 0.5) / (canvas.width / canvas.height)) / Math.PI * 180;
+                var minPitch = config.minPitch + vfov / 2,
+                    maxPitch = config.maxPitch - vfov / 2;
+                var pitchRange = config.maxPitch - config.minPitch;
+                if (pitchRange < vfov) {
+                    // Lock pitch to average of min and max pitch when both can be seen at once
+                    minPitch = maxPitch = (minPitch + maxPitch) / 2;
+                }
+                if (isNaN(minPitch)) minPitch = -90;
+                if (isNaN(maxPitch)) maxPitch = 90;
+                config.pitch = Math.max(minPitch, Math.min(maxPitch, config.pitch));
 
                 renderer.render(config.pitch * Math.PI / 180, config.yaw * Math.PI / 180, config.hfov * Math.PI / 180, { roll: config.roll * Math.PI / 180 });
 
@@ -1722,67 +1730,7 @@ window.pannellum = function (window, document, undefined) {
                 config.hotSpots = config.hotSpots.sort(function (a, b) {
                     return a.pitch < b.pitch;
                 });
-                config.hotSpots.forEach(function (hs) {
-                    var div = document.createElement('div');
-                    div.className = 'pnlm-hotspot pnlm-tooltip pnlm-sprite pnlm-' + escapeHTML(hs.type);
-
-                    var span = document.createElement('span');
-                    if (hs.text) span.innerHTML = escapeHTML(hs.text);
-
-                    var a;
-                    if (hs.video) {
-                        var video = document.createElement('video'),
-                            p = hs.video;
-                        if (config.basePath && !absoluteURL(p)) p = config.basePath + p;
-                        video.src = encodeURI(p);
-                        video.controls = true;
-                        video.style.width = hs.width + 'px';
-                        renderContainer.appendChild(div);
-                        span.appendChild(video);
-                    } else if (hs.image) {
-                        var p = hs.image;
-                        if (config.basePath && !absoluteURL(p)) p = config.basePath + p;
-                        a = document.createElement('a');
-                        a.href = encodeURI(hs.URL ? hs.URL : p);
-                        a.target = '_blank';
-                        span.appendChild(a);
-                        var image = document.createElement('img');
-                        image.src = encodeURI(p);
-                        image.style.width = hs.width + 'px';
-                        image.style.paddingTop = '5px';
-                        renderContainer.appendChild(div);
-                        a.appendChild(image);
-                        span.style.maxWidth = 'initial';
-                    } else if (hs.URL) {
-                        a = document.createElement('a');
-                        a.href = encodeURI(hs.URL);
-                        a.target = '_blank';
-                        renderContainer.appendChild(a);
-                        div.style.cursor = 'pointer';
-                        span.style.cursor = 'pointer';
-                        a.appendChild(div);
-                    } else {
-                        if (hs.sceneId) {
-                            div.onclick = function () {
-                                loadScene(hs.sceneId, hs.targetPitch, hs.targetYaw, hs.targetHfov);
-                                return false;
-                            };
-                            div.ontouchend = function () {
-                                loadScene(hs.sceneId, hs.targetPitch, hs.targetYaw, hs.targetHfov);
-                                return false;
-                            };
-                            div.style.cursor = 'pointer';
-                            span.style.cursor = 'pointer';
-                        }
-                        renderContainer.appendChild(div);
-                    }
-
-                    div.appendChild(span);
-                    span.style.width = span.scrollWidth - 20 + 'px';
-                    span.style.marginLeft = -(span.scrollWidth - 26) / 2 + 'px';
-                    span.style.marginTop = -span.scrollHeight - 12 + 'px';
-                    hs.div = div;
-                });
+                config.hotSpots.forEach(createHotSpot);
             }
             hotspotsCreated = true;
             renderHotSpots();
@@ -1862,8 +1810,9 @@ window.pannellum = function (window, document, undefined) {
          */
         function mergeConfig(sceneId) {
             config = {};
-            var k;
-            var photoSphereExcludes = ['haov', 'vaov', 'vOffset', 'northOffset'];
+            var k, s;
+            var photoSphereExcludes = ['haov', 'vaov', 'vOffset', 'northOffset', 'horizonPitch', 'horizonRoll'];
+            specifiedPhotoSphereExcludes = [];
 
             // Merge default config
             for (k in defaultConfig) {
@@ -1997,11 +1946,6 @@ window.pannellum = function (window, document, undefined) {
 
                         case 'hfov':
                             setHfov(Number(config[key]));
-                            break;
-
-                        case 'pitch':
-                            // Keep pitch within bounds
-                            config.pitch = Math.max(config.minPitch, Math.min(config.maxPitch, config.pitch));
                             break;
 
                         case 'autoLoad':
@@ -2219,7 +2163,7 @@ window.pannellum = function (window, document, undefined) {
          */
         function loadScene(sceneId, targetPitch, targetYaw, targetHfov, fadeDone) {
             loaded = false;
-            oldRenderer = renderer;
+            animatedMove = {};
 
             // Set up fade if specified
             var fadeImg, workingPitch, workingYaw, workingHfov;
@@ -2265,6 +2209,9 @@ window.pannellum = function (window, document, undefined) {
 
             // Create the new config for the scene
             mergeConfig(sceneId);
+
+            // Stop motion
+            speed.yaw = speed.pitch = speed.hfov = 0;
 
             // Reload scene
             processOptions();
