@@ -1952,6 +1952,23 @@ window.pannellum = function (window, document, undefined) {
                 renderContainer.appendChild(preview);
             }
 
+            // Handle different preview values
+            var title = config.title,
+                author = config.author;
+            if (isPreview) {
+                if ('previewTitle' in config) config.title = config.previewTitle;
+                if ('previewAuthor' in config) config.author = config.previewAuthor;
+            }
+
+            // Reset title / author display
+            if (!config.hasOwnProperty('title')) infoDisplay.title.innerHTML = '';
+            if (!config.hasOwnProperty('author')) infoDisplay.author.innerHTML = '';
+            if (!config.hasOwnProperty('title') && !config.hasOwnProperty('author')) infoDisplay.container.style.display = 'none';
+
+            // Fill in load button label and loading box text
+            controls.load.innerHTML = '<p>' + config.strings.loadButtonLabel + '</p>';
+            infoDisplay.load.boxp.innerHTML = config.strings.loadingLabel;
+
             // Process other options
             for (var key in config) {
                 if (config.hasOwnProperty(key)) {
