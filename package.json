@@ -15,6 +15,7 @@
   },
   "scripts": {
     "buildjs": "babel -d build/ src/js --presets minify",
+    "debug": "babel -d build/ src/js",
     "buildcss": "cleancss -o build/pannellum.css src/css/pannellum.css",
     "build": "npm run buildjs && npm run buildcss",
     "prepublish": "npm run build"
