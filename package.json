@@ -19,7 +19,7 @@
   },
   "license": "MIT",
   "homepage": "https://pannellum.org/",
-  "main": "build/index.js",
+  "main": "build/pannellum.js",
   "keywords": [
     "panorama",
     "viewer"

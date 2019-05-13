@@ -62,4 +62,3 @@ Fired when a touch starts. Passes `TouchEvent` to handler.
 ## `touchend`
 
 Fired when a touch ends. Passes `TouchEvent` to handler.
-
